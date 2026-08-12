@@ -2,23 +2,27 @@
 //! surface) in front of the camera and this example continuously prints its
 //! distance in centimetres.
 //!
-//! Two measurement bases, selected with `--center`:
+//! Three measurement bases:
 //!
-//! * **default (histogram mode)**: builds a depth histogram over the whole
-//!   frame and takes the most common depth — the dominant surface (the paper)
-//!   wherever it appears in the image.
-//! * **`--center`**: measures a small patch at the centre of the image (median
-//!   of a 21×21 patch), e.g. for grabbing the object in the middle.
+//! * **default**: whole-frame depth histogram mode — the dominant surface,
+//!   wherever it appears.
+//! * **`--center`**: a small patch at the centre of the image.
+//! * **`--rect=<l>,<t>,<r>,<b>`**: an arbitrary rectangle given as fractions
+//!   (0.0..1.0) of the frame, e.g. `--rect=0.1,0.2,0.5,0.6` measures the box
+//!   from 10% left / 20% top to 50% / 60%. Great for e.g. the bottom-right
+//!   corner: `--rect=0.7,0.7,1.0,1.0`.
 //!
-//! The Gemini 335 depth range is **0.1 m .. 20 m** (best 0.26 m .. 3 m).
-//! Objects closer than the 10 cm minimum produce no valid depth; the example
-//! then reports `out-of-range` instead of a bogus reading.
+//! The region distance is the median of valid depth pixels inside the box,
+//! decided by a sliding-window consistency check. The Gemini 335 depth range is
+//! **0.1 m .. 20 m** (best 0.26 m .. 3 m); closer objects produce no reliable
+//! depth and are reported as `out-of-range`.
 //!
 //! ```text
 //! export OB_SDK_ROOT=/opt/OrbbecSDK
 //! export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib:$LD_LIBRARY_PATH
-//! cargo run --release --example distance          # dominant surface
-//! cargo run --release --example distance --center  # centre of image
+//! cargo run --release --example distance                  # dominant surface
+//! cargo run --release --example distance -- --center      # centre of image
+//! cargo run --release --example distance -- --rect=0.7,0.7,1.0,1.0   # bottom-right
 //! ```
 
 use std::collections::VecDeque;
@@ -41,10 +45,12 @@ const MIN_SUPPORT: f32 = 0.04;
 const MIN_VALID_RATIO: f32 = 0.01;
 /// Half-size of the central patch used in `--center` mode (patch = 2*r+1).
 const CENTER_RADIUS: u32 = 10;
-/// Minimum fraction of the centre patch carrying valid depth before the centre
-/// reading is trusted. Below-min objects fill the patch with scattered garbage,
-/// which keeps support low.
-const CENTER_MIN_SUPPORT: f32 = 0.5;
+/// Minimum fraction of the region carrying valid depth before a region reading
+/// is trusted. Below-min objects fill the region with scattered garbage, which
+/// keeps support low.
+const REGION_MIN_SUPPORT: f32 = 0.3;
+/// Minimum number of valid pixels a region must contain.
+const MIN_REGION_PIXELS: usize = 20;
 /// Smoothing factor for the moving average (0..1, higher = more responsive).
 const SMOOTHING: f32 = 0.3;
 /// Sliding window used to decide a measurement from a batch of frames.
@@ -59,8 +65,26 @@ const WINDOW_MIN_CONSISTENT: usize = 3;
 /// readings fall inside the tolerance and the window is rejected.
 const WINDOW_TOL_M: f32 = 0.10;
 
+/// What part of the frame to measure.
+enum Mode {
+    /// Whole-frame depth histogram mode.
+    Dominant,
+    /// Small patch around the image centre.
+    Center,
+    /// Rectangle given as fractions (left, top, right, bottom) of the frame.
+    Rect(f32, f32, f32, f32),
+}
+
+/// A rectangle in depth-frame pixel coordinates.
+struct Region {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
 fn main() {
-    let center_mode = std::env::args().any(|a| a == "--center");
+    let mode = parse_mode();
 
     let ctx = Context::new().expect("failed to create context");
     let devices = ctx.query_devices().expect("failed to enumerate devices");
@@ -82,10 +106,20 @@ fn main() {
     // Decides each measurement from a sliding window of raw readings.
     let mut window = WindowFilter::new();
 
-    if center_mode {
-        println!("mode: centre patch ({}x{} @ image centre)", CENTER_RADIUS * 2 + 1, CENTER_RADIUS * 2 + 1);
-    } else {
-        println!("mode: dominant surface (whole-frame depth histogram mode)");
+    match mode {
+        Mode::Dominant => println!("mode: dominant surface (whole-frame depth histogram mode)"),
+        Mode::Center => println!(
+            "mode: centre patch ({}x{} @ image centre)",
+            CENTER_RADIUS * 2 + 1,
+            CENTER_RADIUS * 2 + 1
+        ),
+        Mode::Rect(l, t, r, b) => println!(
+            "mode: rect from left {:.0}% top {:.0}% to right {:.0}% bottom {:.0}%",
+            l * 100.0,
+            t * 100.0,
+            r * 100.0,
+            b * 100.0
+        ),
     }
     println!("distance updated in real time (cm)\n");
     println!("{:>6}  {:>9}  {:>9}  {:>10}", "#", "dist(cm)", "avg(cm)", "support");
@@ -102,24 +136,37 @@ fn main() {
                     break;
                 };
 
-                let measurement = if center_mode {
-                    center_distance(&depth)
-                } else {
-                    dominant_distance(&depth, n_bins)
+                let measurement = match mode {
+                    Mode::Dominant => dominant_distance(&depth, n_bins),
+                    Mode::Center => {
+                        let region = Region {
+                            x: depth.width() / 2 - CENTER_RADIUS,
+                            y: depth.height() / 2 - CENTER_RADIUS,
+                            w: CENTER_RADIUS * 2,
+                            h: CENTER_RADIUS * 2,
+                        };
+                        region_distance(&depth, &region)
+                    }
+                    Mode::Rect(l, t, r, b) => {
+                        let region = rect_from_fractions(&depth, l, t, r, b);
+                        region_distance(&depth, &region)
+                    }
                 };
                 frames_seen += 1;
 
                 // Raw reading (metres), if the frame itself looks plausible.
-                let raw_m = measurement.map(|(m, support)| {
-                    // Reject the centre reading unless the patch is mostly one
-                    // surface (below-min garbage is scattered, hence low support).
-                    if center_mode && support < CENTER_MIN_SUPPORT {
+                let raw_m = measurement.and_then(|(m, support)| {
+                    // Reject the reading unless the region is mostly one surface
+                    // (below-min garbage is scattered, hence low support).
+                    if matches!(mode, Mode::Center | Mode::Rect(..))
+                        && support < REGION_MIN_SUPPORT
+                    {
                         None
                     } else {
                         Some(m)
                     }
                 });
-                let confirmed_m = window.update(raw_m.flatten());
+                let confirmed_m = window.update(raw_m);
 
                 let Some(distance_m) = confirmed_m else {
                     // Not stable across frames: object too close (<10 cm) or
@@ -226,20 +273,21 @@ fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> Option<(f32, f32)> {
     Some((best_bin as f32 * BIN_MM as f32 / 1000.0, support))
 }
 
-/// Distance at the centre of the image: median depth of a small central patch.
+/// Distance of a rectangular region: median depth of valid pixels inside it.
 ///
 /// Returns `Some((metres, support))` where support is the fraction of valid
-/// samples in the patch, or `None` if the patch has no valid depth.
-fn center_distance(depth: &DepthFrame) -> Option<(f32, f32)> {
-    let cx = depth.width() / 2;
-    let cy = depth.height() / 2;
-    let r = CENTER_RADIUS;
+/// samples in the region, or `None` if the region is empty / has too few valid
+/// pixels.
+fn region_distance(depth: &DepthFrame, region: &Region) -> Option<(f32, f32)> {
+    let x_hi = (region.x + region.w).min(depth.width());
+    let y_hi = (region.y + region.h).min(depth.height());
+    if region.x >= x_hi || region.y >= y_hi {
+        return None;
+    }
 
     let mut vals = vec![];
-    let x_lo = cx.saturating_sub(r);
-    let y_lo = cy.saturating_sub(r);
-    for y in y_lo..(cy + r).min(depth.height()) {
-        for x in x_lo..(cx + r).min(depth.width()) {
+    for y in region.y..y_hi {
+        for x in region.x..x_hi {
             if let Some(v) = depth.pixel(x, y) {
                 if (MIN_MM..MAX_MM).contains(&v) {
                     vals.push(v);
@@ -248,15 +296,54 @@ fn center_distance(depth: &DepthFrame) -> Option<(f32, f32)> {
         }
     }
 
-    if vals.is_empty() {
+    if vals.len() < MIN_REGION_PIXELS {
         return None;
     }
-    let patch = ((r * 2 + 1) * (r * 2 + 1)) as f32;
-    let support = vals.len() as f32 / patch.min(
-        ((cy + r).min(depth.height()) - y_lo) as f32 * ((cx + r).min(depth.width()) - x_lo) as f32,
-    );
+    let total = (x_hi - region.x) as f32 * (y_hi - region.y) as f32;
+    let support = vals.len() as f32 / total;
     vals.sort_unstable();
     Some((vals[vals.len() / 2] as f32 / 1000.0, support))
+}
+
+/// Convert fractional bounds (0..1 of the frame) into a pixel region.
+fn rect_from_fractions(depth: &DepthFrame, l: f32, t: f32, r: f32, b: f32) -> Region {
+    let w = depth.width() as f32;
+    let h = depth.height() as f32;
+    let l = (l.clamp(0.0, 1.0) * w) as u32;
+    let t = (t.clamp(0.0, 1.0) * h) as u32;
+    let r = (r.clamp(0.0, 1.0) * w) as u32;
+    let b = (b.clamp(0.0, 1.0) * h) as u32;
+    Region {
+        x: l,
+        y: t,
+        w: r.saturating_sub(l),
+        h: b.saturating_sub(t),
+    }
+}
+
+/// Parse the measurement mode from `--center` / `--rect=l,t,r,b` arguments.
+fn parse_mode() -> Mode {
+    let args: Vec<String> = std::env::args().collect();
+    for arg in args.iter().skip(1) {
+        if arg == "--center" {
+            return Mode::Center;
+        }
+        if let Some(v) = arg.strip_prefix("--rect=") {
+            let parts: Vec<f32> = v
+                .split(',')
+                .filter_map(|s| s.trim().parse::<f32>().ok())
+                .collect();
+            if parts.len() == 4 {
+                let (l, t, r, b) = (parts[0], parts[1], parts[2], parts[3]);
+                if l < r && t < b && r <= 1.0 && b <= 1.0 && l >= 0.0 && t >= 0.0 {
+                    return Mode::Rect(l, t, r, b);
+                }
+            }
+            eprintln!("invalid --rect value, expected --rect=left,top,right,bottom (0..1 fractions)");
+            std::process::exit(2);
+        }
+    }
+    Mode::Dominant
 }
 
 /// Decides each measurement from a sliding window of raw readings.
