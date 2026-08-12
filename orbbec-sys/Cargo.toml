@@ -1,0 +1,10 @@
+[package]
+name = "orbbec-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Low-level FFI bindings (bindgen) for OrbbecSDK v2 (Gemini 330 series)"
+links = "OrbbecSDK"
+
+[build-dependencies]
+bindgen = "0.71"
