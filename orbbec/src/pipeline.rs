@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 use orbbec_sys::{ob_config, ob_frame, ob_pipeline, ob_stream_profile, OBFrameType, OBStreamType};
 
+use crate::camera::CameraParam;
 use crate::error::{check_error, Error};
 
 /// Process-global map of active frameset callbacks, keyed by the owning
@@ -36,6 +37,39 @@ extern "C" fn frameset_c_callback(frameset: *mut ob_frame, user_data: *mut std::
     // pipeline, so the pointer stays valid while we are in here.
     if let (Some(cb), Some(fs)) = (map.get_mut(&key), unsafe { Frameset::from_raw(frameset) }) {
         cb(fs);
+    }
+}
+
+/// Depth-to-color / color-to-depth alignment mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignMode {
+    /// No alignment.
+    Disable,
+    /// Hardware depth→color alignment (on-device ASIC).
+    D2cHardware,
+    /// Software depth→color alignment.
+    D2cSoftware,
+    /// Software color→depth alignment.
+    C2dSoftware,
+}
+
+impl AlignMode {
+    pub fn from_raw(v: u32) -> Self {
+        match v {
+            orbbec_sys::OBAlignMode_ALIGN_D2C_HW_MODE => AlignMode::D2cHardware,
+            orbbec_sys::OBAlignMode_ALIGN_D2C_SW_MODE => AlignMode::D2cSoftware,
+            orbbec_sys::OBAlignMode_ALIGN_C2D_SW_MODE => AlignMode::C2dSoftware,
+            _ => AlignMode::Disable,
+        }
+    }
+
+    pub fn as_raw(&self) -> u32 {
+        match self {
+            AlignMode::Disable => orbbec_sys::OBAlignMode_ALIGN_DISABLE,
+            AlignMode::D2cHardware => orbbec_sys::OBAlignMode_ALIGN_D2C_HW_MODE,
+            AlignMode::D2cSoftware => orbbec_sys::OBAlignMode_ALIGN_D2C_SW_MODE,
+            AlignMode::C2dSoftware => orbbec_sys::OBAlignMode_ALIGN_C2D_SW_MODE,
+        }
     }
 }
 
@@ -94,6 +128,26 @@ impl StreamType {
             StreamType::Lidar => orbbec_sys::OBStreamType_OB_STREAM_LIDAR,
             StreamType::ColorLeft => orbbec_sys::OBStreamType_OB_STREAM_COLOR_LEFT,
             StreamType::ColorRight => orbbec_sys::OBStreamType_OB_STREAM_COLOR_RIGHT,
+        }
+    }
+
+    /// The frame type produced by this stream, for frameset lookups.
+    pub fn as_frame_type(&self) -> FrameType {
+        match self {
+            StreamType::Unknown => FrameType::Unknown,
+            StreamType::Video => FrameType::Video,
+            StreamType::Ir => FrameType::Ir,
+            StreamType::Color => FrameType::Color,
+            StreamType::Depth => FrameType::Depth,
+            StreamType::Accel => FrameType::Accel,
+            StreamType::Gyro => FrameType::Gyro,
+            StreamType::IrLeft => FrameType::IrLeft,
+            StreamType::IrRight => FrameType::IrRight,
+            StreamType::RawPhase => FrameType::RawPhase,
+            StreamType::Confidence => FrameType::Confidence,
+            StreamType::Lidar => FrameType::LidarPoints,
+            StreamType::ColorLeft => FrameType::ColorLeft,
+            StreamType::ColorRight => FrameType::ColorRight,
         }
     }
 }
@@ -317,6 +371,11 @@ impl Frame {
             .unwrap_or(0)
     }
 
+    /// The stream profile of this frame (owned by the frame; must not be freed).
+    pub fn stream_profile(&self) -> Option<*mut ob_stream_profile> {
+        self.video_profile()
+    }
+
     fn video_profile(&self) -> Option<*mut ob_stream_profile> {
         // SAFETY: `self.raw` is a valid frame; the returned profile is owned by
         // the frame and must not be freed.
@@ -450,6 +509,23 @@ impl Config {
             })
         }
     }
+
+    /// Set the depth↔color alignment mode.
+    pub fn set_align_mode(&mut self, mode: AlignMode) -> Result<(), Error> {
+        // SAFETY: `self.raw` is a valid config object.
+        unsafe { check_error(|e| orbbec_sys::ob_config_set_align_mode(self.raw, mode.as_raw(), e)) }
+    }
+
+    /// Whether the depth frame should be scaled to the color resolution after
+    /// depth→color alignment. Defaults to false (depth keeps its resolution).
+    pub fn set_depth_scale_after_align_require(&mut self, enable: bool) -> Result<(), Error> {
+        // SAFETY: `self.raw` is a valid config object.
+        unsafe {
+            check_error(|e| {
+                orbbec_sys::ob_config_set_depth_scale_after_align_require(self.raw, enable, e)
+            })
+        }
+    }
 }
 
 impl Drop for Config {
@@ -570,6 +646,17 @@ impl Pipeline {
     pub fn enable_frame_sync(&mut self) -> Result<(), Error> {
         // SAFETY: `self.raw` is a valid pipeline.
         unsafe { check_error(|e| orbbec_sys::ob_pipeline_enable_frame_sync(self.raw, e)) }
+    }
+
+    /// Read the calibration parameters for the current stream configuration.
+    ///
+    /// If D2C alignment is enabled, these parameters reflect the aligned
+    /// (color-sized) depth frame.
+    pub fn camera_param(&self) -> Result<CameraParam, Error> {
+        // SAFETY: `self.raw` is a valid pipeline; the parameter struct is
+        // returned by value and needs no release.
+        let raw = unsafe { check_error(|e| orbbec_sys::ob_pipeline_get_camera_param(self.raw, e))? };
+        Ok(CameraParam::from_raw(raw))
     }
 
     /// Block until the next frameset arrives, or until `timeout_ms` elapses.

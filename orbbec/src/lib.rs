@@ -11,11 +11,16 @@
 //! let ctx = Context::new().expect("failed to create Orbbec context");
 //! ```
 
+pub mod align;
+pub mod camera;
 pub mod context;
 pub mod device;
 pub mod error;
 pub mod pipeline;
 
+pub use align::AlignFilter;
+pub use camera::{CameraParam, Distortion, Extrinsic, Intrinsic};
 pub use context::Context;
 pub use device::{Device, DeviceInfo};
 pub use error::Error;
+pub use pipeline::{AlignMode, Config, Frame, FrameType, Frameset, Pipeline, StreamType};
