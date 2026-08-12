@@ -350,6 +350,23 @@ impl Frame {
         unsafe { check_error(|e| orbbec_sys::ob_frame_get_data_size(self.raw, e)).unwrap_or(0) }
     }
 
+    /// IMU samples as `[x, y, z]` triplets.
+    ///
+    /// Both accelerometer and gyroscope frames store samples as consecutive
+    /// 3×f32 values (12 bytes each). Acceleration is in metres per second
+    /// squared, angular rate in degrees per second.
+    pub fn imu_values(&self) -> Vec<[f32; 3]> {
+        self.data()
+            .chunks_exact(12)
+            .map(|c| {
+                let x = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+                let y = f32::from_le_bytes([c[4], c[5], c[6], c[7]]);
+                let z = f32::from_le_bytes([c[8], c[9], c[10], c[11]]);
+                [x, y, z]
+            })
+            .collect()
+    }
+
     /// Video frame width (0 for non-video frames).
     pub fn width(&self) -> u32 {
         self.video_profile()
@@ -540,6 +557,35 @@ impl Config {
     pub fn set_align_mode(&mut self, mode: AlignMode) -> Result<(), Error> {
         // SAFETY: `self.raw` is a valid config object.
         unsafe { check_error(|e| orbbec_sys::ob_config_set_align_mode(self.raw, mode.as_raw(), e)) }
+    }
+
+    /// Enable the accelerometer stream.
+    ///
+    /// `full_scale_range` is an `OB_ACCEL_FS_*` value (e.g.
+    /// `OB_ACCEL_FS_4g`) and `sample_rate` an `OB_SAMPLE_RATE_*` value (e.g.
+    /// `OB_SAMPLE_RATE_100_HZ`); see the `orbbec_sys` constants. Acceleration
+    /// samples are in metres per second squared.
+    pub fn enable_accel_stream(&mut self, full_scale_range: i32, sample_rate: u32) -> Result<(), Error> {
+        // SAFETY: `self.raw` is a valid config object.
+        unsafe {
+            check_error(|e| {
+                orbbec_sys::ob_config_enable_accel_stream(self.raw, full_scale_range, sample_rate, e)
+            })
+        }
+    }
+
+    /// Enable the gyroscope stream.
+    ///
+    /// `full_scale_range` is an `OB_GYRO_FS_*` value (e.g.
+    /// `OB_GYRO_FS_500dps`) and `sample_rate` an `OB_SAMPLE_RATE_*` value.
+    /// Angular-rate samples are in degrees per second.
+    pub fn enable_gyro_stream(&mut self, full_scale_range: i32, sample_rate: u32) -> Result<(), Error> {
+        // SAFETY: `self.raw` is a valid config object.
+        unsafe {
+            check_error(|e| {
+                orbbec_sys::ob_config_enable_gyro_stream(self.raw, full_scale_range, sample_rate, e)
+            })
+        }
     }
 
     /// Whether the depth frame should be scaled to the color resolution after

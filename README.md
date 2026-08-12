@@ -145,6 +145,7 @@ Run any example from the repo root with the environment set:
 | [`distance`](orbbec/examples/distance.rs) | Measure distance of a region / the whole frame (`--center`, `--rect=`) |
 | [`object_distance`](orbbec/examples/object_distance.rs) | Measure distance of YOLO-style detection boxes |
 | [`color_block`](orbbec/examples/color_block.rs) | Track a colored block and measure its distance |
+| [`imu`](orbbec/examples/imu.rs) | Stream accelerometer + gyroscope data in real time |
 
 ```bash
 cargo run --release --example frames
