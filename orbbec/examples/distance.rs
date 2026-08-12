@@ -10,6 +10,10 @@
 //! * **`--center`**: measures a small patch at the centre of the image (median
 //!   of a 21×21 patch), e.g. for grabbing the object in the middle.
 //!
+//! The Gemini 335 depth range is **0.1 m .. 20 m** (best 0.26 m .. 3 m).
+//! Objects closer than the 10 cm minimum produce no valid depth; the example
+//! then reports `out-of-range` instead of a bogus reading.
+//!
 //! ```text
 //! export OB_SDK_ROOT=/opt/OrbbecSDK
 //! export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib:$LD_LIBRARY_PATH
@@ -28,6 +32,9 @@ const BIN_MM: u16 = 10;
 const MAX_MM: u16 = 8000;
 /// Minimum fraction of pixels supporting the mode, otherwise report no paper.
 const MIN_SUPPORT: f32 = 0.04;
+/// Below this fraction of valid depth pixels the scene is considered
+/// out-of-range (e.g. object closer than the 10 cm minimum).
+const MIN_VALID_RATIO: f32 = 0.01;
 /// Half-size of the central patch used in `--center` mode (patch = 2*r+1).
 const CENTER_RADIUS: u32 = 10;
 /// Smoothing factor for the moving average (0..1, higher = more responsive).
@@ -74,12 +81,25 @@ fn main() {
                     break;
                 };
 
-                let (distance_m, support) = if center_mode {
+                let measurement = if center_mode {
                     center_distance(&depth)
                 } else {
                     dominant_distance(&depth, n_bins)
                 };
                 frames_seen += 1;
+
+                let Some((distance_m, support)) = measurement else {
+                    // No reliable depth: object too close (<10 cm) or no signal.
+                    smoothed = None;
+                    if last_render.elapsed() >= Duration::from_millis(200) {
+                        println!(
+                            "{:>6}  {:>9}  {:>9}  {:>10}",
+                            frames_seen, "out-of-range", "-", "-"
+                        );
+                        last_render = Instant::now();
+                    }
+                    continue;
+                };
 
                 // Exponential moving average for a stable readout (in cm).
                 let distance_cm = distance_m * 100.0;
@@ -113,8 +133,12 @@ fn main() {
 }
 
 /// Find the most frequent valid depth value and its support ratio.
-fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> (f32, f32) {
+///
+/// Returns `None` when too few pixels carry valid depth (object closer than the
+/// 10 cm minimum, or no signal at all).
+fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> Option<(f32, f32)> {
     let pixels = depth.pixels();
+    let total = pixels.len();
     let mut hist = vec![0u32; n_bins];
     let mut valid = 0u32;
 
@@ -126,6 +150,12 @@ fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> (f32, f32) {
         }
     }
 
+    // Almost nothing has valid depth -> too close / out of range.
+    let valid_ratio = valid as f32 / total as f32;
+    if valid_ratio < MIN_VALID_RATIO {
+        return None;
+    }
+
     let (best_bin, best_count) = hist
         .iter()
         .enumerate()
@@ -133,11 +163,7 @@ fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> (f32, f32) {
         .map(|(b, c)| (b, *c))
         .unwrap_or((0, 0));
 
-    let support = if valid > 0 {
-        best_count as f32 / valid as f32
-    } else {
-        0.0
-    };
+    let support = best_count as f32 / valid as f32;
 
     if support < MIN_SUPPORT {
         // Nothing large and flat dominates: fall back to the median of the
@@ -155,20 +181,20 @@ fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> (f32, f32) {
             }
         }
         if vals.is_empty() {
-            return (0.0, 0.0);
+            return None;
         }
         vals.sort_unstable();
-        return (vals[vals.len() / 2] as f32 / 1000.0, support);
+        return Some((vals[vals.len() / 2] as f32 / 1000.0, support));
     }
 
-    (best_bin as f32 * BIN_MM as f32 / 1000.0, support)
+    Some((best_bin as f32 * BIN_MM as f32 / 1000.0, support))
 }
 
 /// Distance at the centre of the image: median depth of a small central patch.
 ///
-/// Returns `(metres, support)` where support is the fraction of valid samples
-/// in the patch.
-fn center_distance(depth: &DepthFrame) -> (f32, f32) {
+/// Returns `Some((metres, support))` where support is the fraction of valid
+/// samples in the patch, or `None` if the patch has no valid depth.
+fn center_distance(depth: &DepthFrame) -> Option<(f32, f32)> {
     let cx = depth.width() / 2;
     let cy = depth.height() / 2;
     let r = CENTER_RADIUS;
@@ -187,12 +213,12 @@ fn center_distance(depth: &DepthFrame) -> (f32, f32) {
     }
 
     if vals.is_empty() {
-        return (0.0, 0.0);
+        return None;
     }
     let patch = ((r * 2 + 1) * (r * 2 + 1)) as f32;
     let support = vals.len() as f32 / patch.min(
         ((cy + r).min(depth.height()) - y_lo) as f32 * ((cx + r).min(depth.width()) - x_lo) as f32,
     );
     vals.sort_unstable();
-    (vals[vals.len() / 2] as f32 / 1000.0, support)
+    Some((vals[vals.len() / 2] as f32 / 1000.0, support))
 }
