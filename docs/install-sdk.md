@@ -49,7 +49,7 @@ make -j$(nproc)
 ```
 
 > 建议安装前缀统一用 `/opt/OrbbecSDK`（与官方预编译包目录一致），
-> 否则需要手动设置 `OB_SDK_ROOT`，见下方 2.4 节。
+> 否则需按第 6 节调整 `OB_SDK_ROOT`。
 
 ### 2.3 安装
 
@@ -71,22 +71,6 @@ sudo make install
 > 注意：源码编译**不含** `OrbbecViewer`（GUI 调试工具）。它只在官网预编译包里提供，
 > 需要的话请用方式二下载，或直接用 `bin/` 下的命令行示例验证出图。
 
-### 2.4 设置 SDK 路径（Rust 构建用）
-
-Rust 的 `orbbec-sys` 通过环境变量 `OB_SDK_ROOT` 定位 SDK，把它写入 shell 配置：
-
-```bash
-echo 'export OB_SDK_ROOT=/opt/OrbbecSDK' >> ~/.bashrc
-source ~/.bashrc
-```
-
-> 注意：`libOrbbecSDK.so` 的 rpath 为 `$ORIGIN:$ORIGIN/../lib`（对
-> `/opt/OrbbecSDK/lib/libOrbbecSDK.so` 展开即 `/opt/OrbbecSDK/lib`），
-> 因此它自带的依赖（在 `lib/` 下）无需 `LD_LIBRARY_PATH` 即可解析。
-> 但 `lib/extensions/` 下的插件（如 `depthengine/libdepthengine.so`）**不在此 rpath 内**，
-> 由 SDK 运行时按相对路径动态加载；若它们自身的依赖解析失败而报缺库，再显式设置：
-> `export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib/extensions/depthengine:$LD_LIBRARY_PATH`
-
 ---
 
 ## 3. 方式二：官方预编译 SDK（快速验证用）
@@ -96,7 +80,7 @@ source ~/.bashrc
 2. 解压后目录通常包含：`bin/`、`include/`、`lib/`、`OrbbecViewer/`。
 3. 把解压目录移动到统一前缀（与方式一保持一致）：
    `sudo mv <解压目录> /opt/OrbbecSDK`
-   然后设置 `export OB_SDK_ROOT=/opt/OrbbecSDK`（见 2.4 节）。
+   然后按第 6 节设置环境变量。
 4. GUI 工具 `OrbbecViewer` 在预编译包的 `OrbbecViewer/` 目录下，
    可直接运行：`./OrbbecViewer`（源码编译版没有它）
 
@@ -160,36 +144,57 @@ ldd /opt/OrbbecSDK/lib/libOrbbecSDK.so | grep -i "not found" || echo "依赖完�
 
 ---
 
-## 6. Rust 构建时的链接约定
+## 6. 构建 Rust 封装（cargo build）
 
-`orbbec-sys/build.rs` 按以下顺序查找 SDK：
+### 6.1 环境变量设置（编译与运行前，必做）
 
-1. 环境变量 `OB_SDK_ROOT`（若设置，使用其下的 `include/` 与 `lib/`）；
-2. 默认 `/usr/local`。
-
-> 本仓库按 `/opt/OrbbecSDK` 安装，因此**必须先 `export OB_SDK_ROOT=/opt/OrbbecSDK`**
-> （见 2.4 节），否则构建会在 bindgen 前报 `OrbbecSDK v2 headers not found`。
-
-找到头文件 `include/libobsensor/ObSensor.h` 后：
-
-- 运行 bindgen 生成 Rust 绑定；
-- 输出链接参数：`-lOrbbecSDK` + 链接搜索路径。
-
-构建：
+编译本仓库前，需在**当前终端**设置两个环境变量（本仓库全部按 `/opt/OrbbecSDK`
+安装，只需在下面这一处设置，无需再配置其他变量）：
 
 ```bash
-# 在 orbbec 项目根目录（需已设置 OB_SDK_ROOT）
-cargo build
-```
+# 编译用：告诉 orbbec-sys 到 /opt/OrbbecSDK 找头文件与 libOrbbecSDK.so（bindgen + 链接）
+export OB_SDK_ROOT=/opt/OrbbecSDK
 
-运行编译出的程序前，确保运行时能找到动态库与扩展插件：
-
-```bash
+# 运行用：告诉动态链接器运行时到哪里加载 libOrbbecSDK.so
 export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib:$LD_LIBRARY_PATH
+
+# 可选：写入 ~/.bashrc，新开终端自动生效
+echo 'export OB_SDK_ROOT=/opt/OrbbecSDK' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 ```
 
-> 若报错 `OrbbecSDK v2 头文件未找到`，说明尚未安装 SDK 或未设置
-> `OB_SDK_ROOT`，回到第 2/3 节。
+说明：
+
+- `OB_SDK_ROOT`：`orbbec-sys/build.rs` 用它定位
+  `include/libobsensor/ObSensor.h` 与 `lib/libOrbbecSDK.so`，用于 bindgen 与链接
+  （构建期）。未设置时默认找 `/usr/local`。
+- `LD_LIBRARY_PATH`：程序**运行时**加载 `libOrbbecSDK.so` 需要。库自带的依赖
+  已通过自身 rpath（`$ORIGIN`）解析；`lib/extensions/` 插件由 SDK 运行时按相对
+  路径加载，若报缺 `libdepthengine.so` 等，再追加其目录即可：
+  `export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib/extensions/depthengine:$LD_LIBRARY_PATH`
+
+### 6.2 编译
+
+```bash
+# 在 orbbec 项目根目录，先确保 6.1 的两个环境变量已设置
+cargo build --release
+```
+
+构建期 `orbbec-sys/build.rs` 会：
+
+- 运行 bindgen 生成 Rust 绑定（需要 clang，见第 1 节）；
+- 输出链接参数 `-lOrbbecSDK` 与库搜索路径。
+
+### 6.3 运行
+
+```bash
+# 新开终端时先重新设置环境变量（或已写入 ~/.bashrc 则执行 source ~/.bashrc）
+cargo run --release
+```
+
+> 若报错 `OrbbecSDK v2 headers not found`，说明 `OB_SDK_ROOT` 未设置或路径不对，
+> 检查 6.1；若报 `error while loading shared libraries`，说明 `LD_LIBRARY_PATH`
+> 未生效，回到 6.1。
 
 ---
 
@@ -201,9 +206,9 @@ export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib:$LD_LIBRARY_PATH
 | 能识别但没图像 | udev 权限 | 执行第 4 节，重插相机 |
 | Viewer 报找不到 libusb | SDK 运行依赖缺失 | `sudo apt install libusb-1.0-0` |
 | `cargo build` 报 bindgen 找不到 libclang | 未装 clang | `sudo apt install clang libclang-dev` |
-| `cargo build` 报 `headers not found` | 未设 `OB_SDK_ROOT` | `export OB_SDK_ROOT=/opt/OrbbecSDK`（见 2.4 节） |
-| 运行时报 `error while loading shared libraries` | 找不到 `libOrbbecSDK.so` | 设置 `LD_LIBRARY_PATH=/opt/OrbbecSDK/lib` |
-| 运行时报缺 `libdepthengine.so` 等扩展 | 找不到 `lib/extensions/` 插件 | 将 `extensions/depthengine` 等目录加入 `LD_LIBRARY_PATH` |
+| `cargo build` 报 `headers not found` | 未设 `OB_SDK_ROOT` | `export OB_SDK_ROOT=/opt/OrbbecSDK`（见 6.1 节） |
+| 运行时报 `error while loading shared libraries` | 找不到 `libOrbbecSDK.so` | 设置 `LD_LIBRARY_PATH=/opt/OrbbecSDK/lib`（见 6.1 节） |
+| 运行时报缺 `libdepthengine.so` 等扩展 | 找不到 `lib/extensions/` 插件 | 将 `extensions/depthengine` 等目录加入 `LD_LIBRARY_PATH`（见 6.1 节） |
 | Gemini 335 无法枚举流配置 | SDK 版本过旧 | 升级到 v2.3+（推荐 v2.5.x） |
 
 ---
