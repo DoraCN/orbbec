@@ -50,38 +50,9 @@ Gemini 335 (USB 3.0)
 
 Rust 封装只做 FFI 绑定，底层仍是官方 C++/C 库 `libOrbbecSDK.so`，需先编译安装。
 
-### 3.1 系统依赖
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake git pkg-config \
-  libusb-1.0-0-dev libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
-  libglew-dev libopencv-dev libglog-dev
-```
-
-### 3.2 编译并安装 SDK
-
-```bash
-git clone --recursive https://github.com/orbbec/OrbbecSDK_v2.git
-cd OrbbecSDK_v2 && mkdir build && cd build
-cmake ..
-make -j$(nproc)
-sudo make install        # 头文件 → /usr/local/include，库 → /usr/local/lib
-```
-
-### 3.3 udev 权限规则（非 root 用户免 sudo 访问）
-
-```bash
-sudo cp ../scripts/99-orbec.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-### 3.4 验证
-
-- 插入相机（USB 3.0 口）后 `lsusb` 应看到 VID `2bc5` 的 Orbbec 设备。
-- 用官方 GUI **Orbbec Viewer**（官网 SDK 下载页）确认 RGB / 深度 / IR 出图正常。
-- `ldd` 确认库依赖完整，必要时 `export LD_LIBRARY_PATH=/usr/local/lib`。
+> **安装步骤（系统依赖、源码/预编译两种方式、udev 权限、验证、Rust 构建所需环境变量
+> `OB_SDK_ROOT` / `LD_LIBRARY_PATH`）详见 [install-sdk.md](install-sdk.md)。**
+> 本仓库统一安装前缀 `/opt/OrbbecSDK`，装完按 install-sdk.md 第 6 节设置环境变量即可 `cargo build`。
 
 ## 4. Rust 封装层设计（本项目自建）
 
