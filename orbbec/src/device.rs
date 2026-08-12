@@ -32,6 +32,64 @@ pub struct DeviceInfo {
     pub ip_address: String,
 }
 
+/// A sensor type present on a device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensorType {
+    Unknown,
+    Ir,
+    Color,
+    Depth,
+    Accel,
+    Gyro,
+    IrLeft,
+    IrRight,
+    RawPhase,
+    Confidence,
+    Lidar,
+    ColorLeft,
+    ColorRight,
+}
+
+impl SensorType {
+    pub fn from_raw(v: u32) -> Self {
+        match v {
+            orbbec_sys::OBSensorType_OB_SENSOR_IR => SensorType::Ir,
+            orbbec_sys::OBSensorType_OB_SENSOR_COLOR => SensorType::Color,
+            orbbec_sys::OBSensorType_OB_SENSOR_DEPTH => SensorType::Depth,
+            orbbec_sys::OBSensorType_OB_SENSOR_ACCEL => SensorType::Accel,
+            orbbec_sys::OBSensorType_OB_SENSOR_GYRO => SensorType::Gyro,
+            orbbec_sys::OBSensorType_OB_SENSOR_IR_LEFT => SensorType::IrLeft,
+            orbbec_sys::OBSensorType_OB_SENSOR_IR_RIGHT => SensorType::IrRight,
+            orbbec_sys::OBSensorType_OB_SENSOR_RAW_PHASE => SensorType::RawPhase,
+            orbbec_sys::OBSensorType_OB_SENSOR_CONFIDENCE => SensorType::Confidence,
+            orbbec_sys::OBSensorType_OB_SENSOR_LIDAR => SensorType::Lidar,
+            orbbec_sys::OBSensorType_OB_SENSOR_COLOR_LEFT => SensorType::ColorLeft,
+            orbbec_sys::OBSensorType_OB_SENSOR_COLOR_RIGHT => SensorType::ColorRight,
+            _ => SensorType::Unknown,
+        }
+    }
+}
+
+impl std::fmt::Display for SensorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SensorType::Unknown => "unknown",
+            SensorType::Ir => "ir",
+            SensorType::Color => "color",
+            SensorType::Depth => "depth",
+            SensorType::Accel => "accel",
+            SensorType::Gyro => "gyro",
+            SensorType::IrLeft => "ir-left",
+            SensorType::IrRight => "ir-right",
+            SensorType::RawPhase => "raw-phase",
+            SensorType::Confidence => "confidence",
+            SensorType::Lidar => "lidar",
+            SensorType::ColorLeft => "color-left",
+            SensorType::ColorRight => "color-right",
+        })
+    }
+}
+
 /// A handle to an opened Orbbec device.
 pub struct Device {
     raw: *mut ob_device,
@@ -56,6 +114,29 @@ impl Device {
     /// Raw pointer to the underlying SDK device.
     pub fn as_raw(&self) -> *mut ob_device {
         self.raw
+    }
+
+    /// List the sensor types available on this device.
+    pub fn sensors(&self) -> Result<Vec<SensorType>, Error> {
+        // SAFETY: `self.raw` is a valid device; the returned list is owned.
+        let list =
+            unsafe { check_error(|e| orbbec_sys::ob_device_get_sensor_list(self.raw, e))? };
+        let result = (|| {
+            // SAFETY: `list` is a valid sensor list.
+            let count =
+                unsafe { check_error(|e| orbbec_sys::ob_sensor_list_get_count(list, e))? };
+            let mut sensors = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                // SAFETY: `list` is a valid sensor list; `i` is in range.
+                let t =
+                    unsafe { check_error(|e| orbbec_sys::ob_sensor_list_get_sensor_type(list, i, e))? };
+                sensors.push(SensorType::from_raw(t));
+            }
+            Ok(sensors)
+        })();
+        // SAFETY: `list` was returned by the SDK and is owned by us.
+        let _ = unsafe { check_error(|e| orbbec_sys::ob_delete_sensor_list(list, e)) };
+        result
     }
 
     /// Read the static information of this device.

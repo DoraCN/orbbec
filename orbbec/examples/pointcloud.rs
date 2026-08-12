@@ -1,5 +1,6 @@
 //! Generate an RGB point cloud from synchronized depth+color frames and report
-//! point statistics (count, bounding box, a few samples).
+//! point statistics (count, bounding box, a few samples), demonstrating the
+//! range-based outlier filter.
 //!
 //! ```text
 //! export OB_SDK_ROOT=/opt/OrbbecSDK
@@ -68,16 +69,13 @@ fn main() {
             .expect("failed to generate point cloud")
             .expect("point cloud filter produced no frame");
 
-        let cloud = PointCloud::from_frame(cloud, PointFormat::XyzRgb);
         println!("==== point cloud #{shown} ====");
-        let valid: Vec<[f32; 3]> = cloud
-            .points()
-            .into_iter()
-            .filter(|p| p[2] > 0.0 && p[2] < 10.0)
-            .collect();
+        let cloud = PointCloud::from_frame(cloud, PointFormat::XyzRgb);
+        let all = cloud.points();
+        let valid = cloud.points_in_range(0.2, 10.0);
         println!(
-            "  points: {} (valid <10m: {})",
-            cloud.len(),
+            "  points: {} (in 0.2..10m: {})",
+            all.len(),
             valid.len()
         );
         if !valid.is_empty() {

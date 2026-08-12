@@ -12,6 +12,7 @@ use orbbec_sys::{ob_config, ob_frame, ob_pipeline, ob_stream_profile, OBFrameTyp
 
 use crate::camera::CameraParam;
 use crate::error::{check_error, Error};
+use crate::stream::{StreamProfile, StreamProfileList};
 
 /// Process-global map of active frameset callbacks, keyed by the owning
 /// pipeline's raw pointer value.
@@ -489,6 +490,21 @@ impl Config {
         }
     }
 
+    /// Enable a stream with an explicit, previously matched profile.
+    pub fn enable_stream_with_profile(&mut self, profile: &StreamProfile) -> Result<(), Error> {
+        // SAFETY: `self.raw` is a valid config object and `profile` a valid SDK
+        // stream profile; the config keeps its own reference.
+        unsafe {
+            check_error(|e| {
+                orbbec_sys::ob_config_enable_stream_with_stream_profile(
+                    self.raw,
+                    profile.as_raw(),
+                    e,
+                )
+            })
+        }
+    }
+
     /// Enable all streams supported by the device.
     pub fn enable_all_streams(&mut self) -> Result<(), Error> {
         // SAFETY: `self.raw` is a valid config object.
@@ -667,6 +683,20 @@ impl Pipeline {
         // returned by value and needs no release.
         let raw = unsafe { check_error(|e| orbbec_sys::ob_pipeline_get_camera_param(self.raw, e))? };
         Ok(CameraParam::from_raw(raw))
+    }
+
+    /// List the stream profiles supported by a sensor.
+    pub fn stream_profiles(&self, sensor: StreamType) -> Result<StreamProfileList, Error> {
+        // SAFETY: `sensor` is a valid stream type; `self.raw` a valid pipeline.
+        let sensor_type = unsafe { orbbec_sys::ob_stream_type_to_sensor_type(sensor.as_raw()) };
+        // SAFETY: the returned list is owned by us.
+        let raw = unsafe {
+            check_error(|e| {
+                orbbec_sys::ob_pipeline_get_stream_profile_list(self.raw, sensor_type, e)
+            })?
+        };
+        // SAFETY: `raw` is a valid owned list.
+        Ok(unsafe { StreamProfileList::from_raw(raw) })
     }
 
     /// Block until the next frameset arrives, or until `timeout_ms` elapses.

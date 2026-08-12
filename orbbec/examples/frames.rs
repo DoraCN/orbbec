@@ -1,5 +1,6 @@
 //! Capture frames from the depth and color streams over a channel and print
-//! per-frame info for a few seconds.
+//! per-frame info (using the typed DepthFrame / ColorFrame wrappers) for a few
+//! seconds.
 //!
 //! Run from the repo root with the SDK env vars set (see docs/install-sdk.md §6):
 //!
@@ -12,7 +13,7 @@
 use std::time::Duration;
 
 use orbbec::pipeline::{Config, FrameType, Pipeline, StreamType};
-use orbbec::Context;
+use orbbec::{ColorFrame, Context, DepthFrame};
 
 fn main() {
     let ctx = Context::new().expect("failed to create context");
@@ -40,23 +41,36 @@ fn main() {
     while std::time::Instant::now() < deadline {
         match frames.recv_timeout(Duration::from_millis(2000)) {
             Ok(frameset) => {
-                for (ft, name) in [
-                    (FrameType::Depth, "depth"),
-                    (FrameType::Color, "color"),
-                    (FrameType::Ir, "ir"),
-                ] {
-                    if let Some(frame) = frameset.frame(ft) {
+                if let Some(frame) = frameset.frame(FrameType::Depth) {
+                    if let Some(d) = DepthFrame::try_new(frame) {
                         println!(
-                            "[{:>5}] {name}: {}x{} fmt={} idx={} hw_us={} sys_us={} bytes={}",
+                            "[{:>5}] depth: {}x{} idx={} center={}mm",
                             count,
-                            frame.width(),
-                            frame.height(),
-                            frame.format(),
-                            frame.index(),
-                            frame.timestamp_us(),
-                            frame.system_timestamp_us(),
-                            frame.data_size(),
+                            d.width(),
+                            d.height(),
+                            d.center_depth_mm().map(|v| v as i32).unwrap_or(-1),
+                            d.pixel(10, 10).unwrap_or(0),
                         );
+                    }
+                }
+                if let Some(frame) = frameset.frame(FrameType::Color) {
+                    let (w, h, fmt) = (frame.width(), frame.height(), frame.format());
+                    match ColorFrame::try_new(frame) {
+                        Some(c) => {
+                            let (r, g, b) = c
+                                .pixel_rgb(c.width() / 2, c.height() / 2)
+                                .unwrap_or((0, 0, 0));
+                            println!(
+                                "[{:>5}] color: {}x{} fmt={} center_rgb=({r},{g},{b})",
+                                count,
+                                c.width(),
+                                c.height(),
+                                c.format(),
+                            );
+                        }
+                        None => {
+                            println!("[{:>5}] color: {w}x{h} fmt={fmt} (uncompressed color)", count);
+                        }
                     }
                 }
                 count += 1;

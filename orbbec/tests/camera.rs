@@ -16,7 +16,10 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use orbbec::pipeline::{Config, FrameType, Frameset, Pipeline, StreamType};
-use orbbec::{AlignFilter, CameraParam, Context, PointCloud, PointCloudFilter, PointFormat};
+use orbbec::{
+    AlignFilter, CameraParam, Context, DepthFrame, PointCloud, PointCloudFilter, PointFormat,
+    StreamProfileList,
+};
 
 /// A single USB camera cannot be opened by multiple threads at once, and
 /// `cargo test` runs tests in parallel by default, so all hardware tests
@@ -229,16 +232,106 @@ fn generate_rgb_pointcloud() {
             .expect("point cloud")
             .expect("no cloud frame");
         let cloud = PointCloud::from_frame(cloud, PointFormat::XyzRgb);
-        let valid: Vec<[f32; 3]> = cloud
-            .points()
-            .into_iter()
-            .filter(|p| p[2] > 0.0)
-            .collect();
+        let valid = cloud.points_in_range(0.1, 10.0);
         assert!(!valid.is_empty(), "point cloud had no valid points");
-        println!("point cloud: {} points, {} valid", cloud.len(), valid.len());
+        println!(
+            "point cloud: {} points, {} in 0.1..10m",
+            cloud.len(),
+            valid.len()
+        );
         generated = true;
         break;
     }
     assert!(generated, "no point cloud generated");
+    pipeline.stop().expect("stop");
+}
+
+#[test]
+fn typed_depth_frame() {
+    let Some(_hw) = hw_lock() else { return };
+    let _ctx = context();
+    let mut config = Config::new().expect("config");
+    config.enable_stream(StreamType::Depth).expect("depth");
+
+    let mut pipeline = Pipeline::new().expect("pipeline");
+    let frames = pipeline
+        .start_capture(Some(&config))
+        .expect("start");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut ok = false;
+    while std::time::Instant::now() < deadline {
+        let frameset = frames.recv_timeout(Duration::from_secs(2)).expect("timeout");
+        if let Some(frame) = frameset.frame(FrameType::Depth) {
+            let depth = DepthFrame::try_new(frame).expect("depth frame should be Z16");
+            assert_eq!(depth.width() * depth.height(), depth.pixels().len() as u32);
+            let cx = depth.width() / 2;
+            let cy = depth.height() / 2;
+            let _ = depth.pixel(cx, cy); // in-bounds access must not panic
+            assert!(depth.pixel(depth.width(), depth.height()).is_none()); // out of range
+            println!(
+                "depth {}x{} center={}mm",
+                depth.width(),
+                depth.height(),
+                depth.center_depth_mm().unwrap_or(0)
+            );
+            ok = true;
+            break;
+        }
+    }
+    assert!(ok, "no depth frame captured");
+    pipeline.stop().expect("stop");
+}
+
+#[test]
+fn sensor_list() {
+    let Some(_hw) = hw_lock() else { return };
+    let ctx = context();
+    let device = ctx.open_device(0).expect("open device");
+    let sensors = device.sensors().expect("sensor list");
+    assert!(sensors.contains(&orbbec::SensorType::Depth));
+    assert!(sensors.contains(&orbbec::SensorType::Color));
+    println!("sensors: {sensors:?}");
+}
+
+#[test]
+fn stream_profile_matching() {
+    let Some(_hw) = hw_lock() else { return };
+    let _ctx = context();
+    let pipeline = Pipeline::new().expect("pipeline");
+
+    let list: StreamProfileList = pipeline
+        .stream_profiles(StreamType::Depth)
+        .expect("depth profiles");
+    assert!(list.count() > 0, "no depth profiles");
+    let first = list.profile(0).expect("first profile");
+    assert!(first.width() > 0 && first.height() > 0);
+
+    // Match an explicit 640x400@30 profile and actually stream with it.
+    let matched = list
+        .match_video(Some(640), Some(400), None, Some(30))
+        .expect("match failed")
+        .expect("no 640x400@30 profile");
+    assert_eq!((matched.width(), matched.height()), (640, 400));
+
+    let mut config = Config::new().expect("config");
+    config
+        .enable_stream_with_profile(&matched)
+        .expect("enable matched");
+    let mut pipeline = Pipeline::new().expect("pipeline");
+    let frames = pipeline.start_capture(Some(&config)).expect("start");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut ok = false;
+    while std::time::Instant::now() < deadline {
+        let frameset = frames.recv_timeout(Duration::from_secs(2)).expect("timeout");
+        if let Some(d) = frameset.frame(FrameType::Depth) {
+            assert_eq!((d.width(), d.height()), (640, 400));
+            println!("matched profile streaming: {}x{}", d.width(), d.height());
+            ok = true;
+            break;
+        }
+    }
+    assert!(ok, "no frame from matched profile");
     pipeline.stop().expect("stop");
 }

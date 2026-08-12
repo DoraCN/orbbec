@@ -29,9 +29,7 @@ impl PointFormat {
 /// Generates point cloud frames from depth (and color) frames.
 pub struct PointCloudFilter {
     inner: Filter,
-}
-
-// SAFETY: The filter is an opaque SDK object; calls on it are not tied to a
+}// SAFETY: The filter is an opaque SDK object; calls on it are not tied to a
 // specific thread.
 unsafe impl Send for PointCloudFilter {}
 
@@ -100,6 +98,64 @@ pub struct ColorPoint {
     pub b: f32,
 }
 
+/// Depth-frame threshold filter (removes depths outside a millimetre range).
+///
+/// Wraps the SDK `"ThresholdFilter"`. Applied to a depth frame before point
+/// cloud generation to cut off too-near / too-far / invalid samples.
+pub struct ThresholdFilter {
+    inner: Filter,
+}
+
+impl ThresholdFilter {
+    /// Create a new threshold filter.
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self {
+            inner: Filter::new("ThresholdFilter")?,
+        })
+    }
+
+    /// Lower bound in millimetres (default 0).
+    pub fn set_min_mm(&self, value: u16) -> Result<(), Error> {
+        self.inner.set_config_value("min", value as f64)
+    }
+
+    /// Upper bound in millimetres (default 16000).
+    pub fn set_max_mm(&self, value: u16) -> Result<(), Error> {
+        self.inner.set_config_value("max", value as f64)
+    }
+
+    /// Filter a depth frame synchronously.
+    pub fn process(&self, frame: &Frame) -> Result<Option<Frame>, Error> {
+        self.inner.process(frame)
+    }
+}
+
+/// Depth-frame decimation filter (downsampling).
+///
+/// Wraps the SDK `"DecimationFilter"`.
+pub struct DecimationFilter {
+    inner: Filter,
+}
+
+impl DecimationFilter {
+    /// Create a new decimation filter.
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self {
+            inner: Filter::new("DecimationFilter")?,
+        })
+    }
+
+    /// Downsample factor, 1..=8.
+    pub fn set_decimate(&self, factor: u32) -> Result<(), Error> {
+        self.inner.set_config_value("decimate", factor.clamp(1, 8) as f64)
+    }
+
+    /// Filter a depth frame synchronously.
+    pub fn process(&self, frame: &Frame) -> Result<Option<Frame>, Error> {
+        self.inner.process(frame)
+    }
+}
+
 /// View over a point cloud [`Frame`].
 ///
 /// The frame is owned by this type and released on drop.
@@ -156,6 +212,17 @@ impl PointCloud {
                 })
                 .collect(),
         }
+    }
+
+    /// Points whose depth `z` lies in `[min_m, max_m]` (metres).
+    ///
+    /// This is the practical "remove outliers" filter: zero-depth samples and
+    /// points beyond a working distance are dropped.
+    pub fn points_in_range(&self, min_m: f32, max_m: f32) -> Vec<[f32; 3]> {
+        self.points()
+            .into_iter()
+            .filter(|p| p[2] >= min_m && p[2] <= max_m)
+            .collect()
     }
 
     /// The points with colors (RGB_POINT format only).
