@@ -180,11 +180,12 @@ impl ColorFrame {
         let format = frame.format();
         let bytes = (width * height) as usize;
         let expected = match format {
-            // RGB / BGR / Y8 / GRAY
-            orbbec_sys::OBFormat_OB_FORMAT_RGB
-            | orbbec_sys::OBFormat_OB_FORMAT_BGR
-            | orbbec_sys::OBFormat_OB_FORMAT_Y8
-            | orbbec_sys::OBFormat_OB_FORMAT_GRAY => Some(bytes),
+            // RGB / BGR: 3 bytes per pixel.
+            orbbec_sys::OBFormat_OB_FORMAT_RGB | orbbec_sys::OBFormat_OB_FORMAT_BGR => {
+                Some(bytes * 3)
+            }
+            // Y8 / GRAY: 1 byte per pixel.
+            orbbec_sys::OBFormat_OB_FORMAT_Y8 | orbbec_sys::OBFormat_OB_FORMAT_GRAY => Some(bytes),
             // RGBA / BGRA
             orbbec_sys::OBFormat_OB_FORMAT_RGBA | orbbec_sys::OBFormat_OB_FORMAT_BGRA => {
                 Some(bytes * 4)
