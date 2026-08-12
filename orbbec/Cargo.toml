@@ -3,7 +3,14 @@ name = "orbbec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "Safe, idiomatic Rust bindings for Orbbec depth cameras (OrbbecSDK v2)"
+readme = "../README.md"
+keywords = ["orbbec", "depth-camera", "depth", "camera", "3d"]
+categories = ["computer-vision", "hardware-support"]
 
 [dependencies]
 orbbec-sys = { workspace = true }

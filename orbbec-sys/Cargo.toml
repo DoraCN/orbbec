@@ -3,8 +3,14 @@ name = "orbbec-sys"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Low-level FFI bindings (bindgen) for OrbbecSDK v2"
+readme = "../README.md"
 links = "OrbbecSDK"
+keywords = ["orbbec", "ffi", "bindgen", "depth-camera", "orbbecsdk"]
+categories = ["external-ffi-bindings", "hardware-support"]
 
 [build-dependencies]
 bindgen = "0.71"

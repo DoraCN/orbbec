@@ -6,6 +6,10 @@ members = ["orbbec-sys", "orbbec"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+rust-version = "1.82"
+repository = "https://github.com/DoraCN/orbbec"
+homepage = "https://www.orbbec.com/"
+documentation = "https://docs.rs/orbbec"
 
 [workspace.dependencies]
-orbbec-sys = { path = "orbbec-sys" }
+orbbec-sys = { path = "orbbec-sys", version = "0.1.0" }
