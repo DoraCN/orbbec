@@ -1,6 +1,6 @@
 # 安装奥比中光官方 SDK (OrbbecSDK v2)
 
-> 适用相机：Gemini 335 / 330 系列
+> 适用：所有支持 OrbbecSDK v2 的奥比中光相机（如 Gemini、Femto、Astra 等系列）
 > 适用系统：Ubuntu 22.04 x86_64
 > 说明：本仓库的 Rust 封装通过 FFI 链接**系统安装的 `libOrbbecSDK.so`**，
 > 因此必须先按本文安装官方 SDK，才能 `cargo build` 本仓库。
@@ -209,7 +209,7 @@ cargo run --release
 | `cargo build` 报 `headers not found` | 未设 `OB_SDK_ROOT` | `export OB_SDK_ROOT=/opt/OrbbecSDK`（见 6.1 节） |
 | 运行时报 `error while loading shared libraries` | 找不到 `libOrbbecSDK.so` | 设置 `LD_LIBRARY_PATH=/opt/OrbbecSDK/lib`（见 6.1 节） |
 | 运行时报缺 `libdepthengine.so` 等扩展 | 找不到 `lib/extensions/` 插件 | 将 `extensions/depthengine` 等目录加入 `LD_LIBRARY_PATH`（见 6.1 节） |
-| Gemini 335 无法枚举流配置 | SDK 版本过旧 | 升级到 v2.3+（推荐 v2.5.x） |
+| 相机无法枚举流配置 | SDK 版本过旧 | 升级到 v2.3+（推荐 v2.5.x） |
 
 ---
 

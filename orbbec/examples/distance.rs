@@ -13,9 +13,10 @@
 //!   corner: `--rect=0.7,0.7,1.0,1.0`.
 //!
 //! The region distance is the median of valid depth pixels inside the box,
-//! decided by a sliding-window consistency check. The Gemini 335 depth range is
-//! **0.1 m .. 20 m** (best 0.26 m .. 3 m); closer objects produce no reliable
-//! depth and are reported as `out-of-range`.
+//! decided by a sliding-window consistency check. Note that depth cameras have
+//! a model-dependent minimum working range (e.g. the Gemini 335: 0.1–20 m,
+//! best 0.26–3 m); closer objects produce no reliable depth and are reported
+//! as `out-of-range`.
 //!
 //! ```text
 //! export OB_SDK_ROOT=/opt/OrbbecSDK

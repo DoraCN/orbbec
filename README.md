@@ -1,7 +1,9 @@
-# Orbbec Gemini 335 Rust SDK
+# Orbbec Rust SDK
 
-Safe, idiomatic Rust bindings for the [Orbbec Gemini 335 / 330-series](https://www.orbbec.com/)
-depth camera, built on the official **OrbbecSDK v2** C API via FFI.
+Safe, idiomatic Rust bindings for [Orbbec depth cameras](https://www.orbbec.com/),
+built on the official **OrbbecSDK v2** C API via FFI. It works with any
+OrbbecSDK-v2-compatible device (Gemini, Femto, Astra series, ...); a **Gemini 335**
+is used for development and testing.
 
 The crate gives you a type-safe, memory-safe interface to capture synchronized
 RGB + depth streams, align them, read camera intrinsics, generate point clouds
@@ -60,7 +62,8 @@ RAII type and converts SDK `ob_error**` out-parameters into a typed [`Error`].
 - **Ubuntu 22.04+ x86_64** (other Linux should work)
 - **OrbbecSDK v2** installed — follow [`docs/install-sdk.md`](docs/install-sdk.md)
   (system packages, source build, udev rules, environment variables)
-- **Gemini 335 / 330** camera connected on a **USB 3.0** port
+- An OrbbecSDK-v2-compatible Orbbec depth camera connected on a **USB 3.0** port
+  (developed/tested on a Gemini 335)
 - `clang` + `libclang-dev` (bindgen), `cmake`, C/C++ toolchain
 
 ## Installation
@@ -174,14 +177,15 @@ point cloud generation, typed depth frames and stream-profile matching.
 
 - [`docs/install-sdk.md`](docs/install-sdk.md) — installing the Orbbec SDK
   (source or prebuilt), udev rules, verification and the build environment
-- [`docs/gemini335_rust_plan.md`](docs/gemini335_rust_plan.md) — the camera
-  integration plan (hardware specs, architecture, milestones)
+- [`docs/gemini335_rust_plan.md`](docs/gemini335_rust_plan.md) — an internal
+  integration plan written for the Gemini 335 test device
 - Crate docs: `cargo doc --open`
 
 ## Notes & limitations
 
-- The depth camera has a **minimum working range of 0.1 m** (best 0.26–3 m);
-  objects closer produce no reliable depth (the SDK emits garbage values).
+- Depth cameras have a **minimum working range** that varies by model (e.g. the
+  Gemini 335: 0.1–20 m, best 0.26–3 m); objects closer produce no reliable
+  depth (the SDK emits garbage values).
 - Default color profile is MJPG; use an uncompressed profile (e.g.
   `1280x720@30` RGB) when you need per-pixel color access.
 - The binding targets the installed SDK ABI. Re-run `cargo build` after an SDK

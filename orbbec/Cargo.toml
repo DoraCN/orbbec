@@ -3,7 +3,7 @@ name = "orbbec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Safe, idiomatic Rust bindings for the Orbbec Gemini 335 depth camera (OrbbecSDK v2)"
+description = "Safe, idiomatic Rust bindings for Orbbec depth cameras (OrbbecSDK v2)"
 
 [dependencies]
 orbbec-sys = { workspace = true }

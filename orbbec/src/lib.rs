@@ -1,7 +1,8 @@
-//! Safe, idiomatic Rust bindings for the Orbbec Gemini 335 depth camera.
+//! Safe, idiomatic Rust bindings for Orbbec depth cameras.
 //!
 //! This crate wraps the official OrbbecSDK v2 (C API) via the `orbbec-sys`
-//! crate. It links against the system-installed `libOrbbecSDK.so`.
+//! crate. It links against the system-installed `libOrbbecSDK.so` and works
+//! with any OrbbecSDK-v2-compatible device.
 //!
 //! Make sure the Orbbec SDK v2 is installed first, see `docs/install-sdk.md`.
 //!
