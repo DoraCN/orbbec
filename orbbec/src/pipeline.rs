@@ -416,6 +416,16 @@ impl Frameset {
         }
     }
 
+    /// Take ownership of a filter output that is actually a frameset.
+    ///
+    /// This is used for e.g. [`AlignFilter::process`](crate::align::AlignFilter::process),
+    /// whose synchronous result is a frameset containing the aligned frames.
+    pub fn from_frame(frame: Frame) -> Self {
+        let raw = frame.as_raw();
+        std::mem::forget(frame);
+        Self { raw }
+    }
+
     /// Raw pointer to the underlying SDK frameset.
     pub fn as_raw(&self) -> *mut ob_frame {
         self.raw

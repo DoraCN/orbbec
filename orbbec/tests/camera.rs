@@ -12,14 +12,29 @@
 //! cargo test -p orbbec --release --test camera
 //! ```
 
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-use orbbec::pipeline::{Config, FrameType, Pipeline, StreamType};
+use orbbec::pipeline::{Config, FrameType, Frameset, Pipeline, StreamType};
 use orbbec::{AlignFilter, CameraParam, Context, PointCloud, PointCloudFilter, PointFormat};
+
+/// A single USB camera cannot be opened by multiple threads at once, and
+/// `cargo test` runs tests in parallel by default, so all hardware tests
+/// serialize behind this lock.
+static HW_LOCK: Mutex<()> = Mutex::new(());
 
 /// Returns `true` if hardware tests should run.
 fn hardware_enabled() -> bool {
     std::env::var("ORBBEC_TEST").is_ok_and(|v| v == "1" || v == "true")
+}
+
+/// Acquire exclusive access to the camera, or skip if disabled.
+fn hw_lock() -> Option<MutexGuard<'static, ()>> {
+    if !hardware_enabled() {
+        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
+        return None;
+    }
+    Some(HW_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 fn context() -> Context {
@@ -28,20 +43,14 @@ fn context() -> Context {
 
 #[test]
 fn context_creation() {
-    if !hardware_enabled() {
-        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
-        return;
-    }
+    let Some(_hw) = hw_lock() else { return };
     let ctx = context();
     assert!(!ctx.as_raw().is_null());
 }
 
 #[test]
 fn enumerate_devices() {
-    if !hardware_enabled() {
-        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
-        return;
-    }
+    let Some(_hw) = hw_lock() else { return };
     let ctx = context();
     let devices = ctx.query_devices().expect("failed to enumerate devices");
     assert!(!devices.is_empty(), "expected at least one Orbbec device");
@@ -53,10 +62,7 @@ fn enumerate_devices() {
 
 #[test]
 fn open_and_read_device_info() {
-    if !hardware_enabled() {
-        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
-        return;
-    }
+    let Some(_hw) = hw_lock() else { return };
     let ctx = context();
     let device = ctx.open_device(0).expect("failed to open device");
     let info = device.info().expect("failed to read device info");
@@ -66,10 +72,7 @@ fn open_and_read_device_info() {
 
 #[test]
 fn capture_depth_and_color_frames() {
-    if !hardware_enabled() {
-        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
-        return;
-    }
+    let Some(_hw) = hw_lock() else { return };
     let _ctx = context();
     let mut config = Config::new().expect("failed to create config");
     config.enable_stream(StreamType::Depth).expect("depth");
@@ -113,26 +116,32 @@ fn capture_depth_and_color_frames() {
 
 #[test]
 fn camera_params_are_valid() {
-    if !hardware_enabled() {
-        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
-        return;
-    }
+    let Some(_hw) = hw_lock() else { return };
     let _ctx = context();
-    let pipeline = Pipeline::new().expect("failed to create pipeline");
+    let mut config = Config::new().expect("config");
+    config.enable_stream(StreamType::Depth).expect("depth");
+    config.enable_stream(StreamType::Color).expect("color");
+    let mut pipeline = Pipeline::new().expect("failed to create pipeline");
+    // Intrinsics are read from the running stream config, so start first.
+    let frames = pipeline
+        .start_capture(Some(&config))
+        .expect("failed to start pipeline");
+    frames
+        .recv_timeout(Duration::from_secs(3))
+        .expect("no frame received before reading intrinsics");
+
     let param: CameraParam = pipeline.camera_param().expect("failed to read camera params");
     assert!(param.depth.fx > 0.0 && param.depth.fy > 0.0);
     assert!(param.rgb.fx > 0.0 && param.rgb.fy > 0.0);
     assert!(param.depth.width > 0 && param.rgb.width > 0);
     println!("depth fx={} fy={} cx={} cy={}", param.depth.fx, param.depth.fy, param.depth.cx, param.depth.cy);
     println!("rgb   fx={} fy={} cx={} cy={}", param.rgb.fx, param.rgb.fy, param.rgb.cx, param.rgb.cy);
+    pipeline.stop().expect("failed to stop pipeline");
 }
 
 #[test]
 fn align_depth_to_color() {
-    if !hardware_enabled() {
-        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
-        return;
-    }
+    let Some(_hw) = hw_lock() else { return };
     let _ctx = context();
     let mut config = Config::new().expect("config");
     config.enable_stream(StreamType::Depth).expect("depth");
@@ -150,7 +159,8 @@ fn align_depth_to_color() {
         let frameset = frames
             .recv_timeout(Duration::from_secs(2))
             .expect("timed out");
-        if frameset.frame(FrameType::Color).is_none() {
+        // The align filter needs both depth and color in the same frameset.
+        if frameset.frame(FrameType::Depth).is_none() || frameset.frame(FrameType::Color).is_none() {
             continue;
         }
         align
@@ -160,9 +170,19 @@ fn align_depth_to_color() {
             .process(&frameset)
             .expect("align process")
             .expect("align produced no frame");
-        // Aligned depth matches the color resolution.
-        assert!(aligned.width() > 0 && aligned.height() > 0);
-        println!("aligned depth {}x{} (color {}x{})", aligned.width(), aligned.height(), frameset.frame(FrameType::Color).unwrap().width(), frameset.frame(FrameType::Color).unwrap().height());
+        // The align output is a frameset; extract the aligned depth frame.
+        let aligned_fs = Frameset::from_frame(aligned);
+        let aligned_depth = aligned_fs
+            .frame(FrameType::Depth)
+            .expect("aligned frameset has no depth frame");
+        assert!(aligned_depth.width() > 0 && aligned_depth.height() > 0);
+        println!(
+            "aligned depth {}x{} (color {}x{})",
+            aligned_depth.width(),
+            aligned_depth.height(),
+            frameset.frame(FrameType::Color).unwrap().width(),
+            frameset.frame(FrameType::Color).unwrap().height()
+        );
         aligned_ok = true;
         break;
     }
@@ -172,10 +192,7 @@ fn align_depth_to_color() {
 
 #[test]
 fn generate_rgb_pointcloud() {
-    if !hardware_enabled() {
-        eprintln!("skipped: set ORBBEC_TEST=1 to run hardware tests");
-        return;
-    }
+    let Some(_hw) = hw_lock() else { return };
     let _ctx = context();
     let mut config = Config::new().expect("config");
     config.enable_stream(StreamType::Depth).expect("depth");
