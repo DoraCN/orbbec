@@ -1,6 +1,6 @@
 # 安装奥比中光官方 SDK (OrbbecSDK v2)
 
-> 适用：所有支持 OrbbecSDK v2 的奥比中光相机（如 Gemini、Femto、Astra 等系列）
+> 适用：所有支持 OrbbecSDK v2 的奥比中光相机
 > 适用系统：Ubuntu 22.04 x86_64
 > 说明：本仓库的 Rust 封装通过 FFI 链接**系统安装的 `libOrbbecSDK.so`**，
 > 因此必须先按本文安装官方 SDK，才能 `cargo build` 本仓库。

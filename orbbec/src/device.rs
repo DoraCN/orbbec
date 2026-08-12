@@ -14,7 +14,7 @@ use crate::error::{check_error, Error};
 /// Static information about a connected Orbbec device.
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
-    /// Device model name as reported by the SDK, e.g. "Gemini 335L".
+    /// Device model name as reported by the SDK.
     pub name: String,
     /// Product ID.
     pub pid: u32,
