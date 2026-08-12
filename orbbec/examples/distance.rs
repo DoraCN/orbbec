@@ -21,6 +21,7 @@
 //! cargo run --release --example distance --center  # centre of image
 //! ```
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use orbbec::pipeline::{Config, FrameType, Pipeline, StreamType};
@@ -28,7 +29,10 @@ use orbbec::{Context, DepthFrame};
 
 /// Histogram bin width in millimetres.
 const BIN_MM: u16 = 10;
-/// Depth range considered (0.1 m .. 8 m).
+/// Depth values below this (10 cm, the sensor minimum) are treated as invalid —
+/// the SDK emits garbage instead of 0 for objects too close to measure.
+const MIN_MM: u16 = 100;
+/// Depth range considered (up to 8 m).
 const MAX_MM: u16 = 8000;
 /// Minimum fraction of pixels supporting the mode, otherwise report no paper.
 const MIN_SUPPORT: f32 = 0.04;
@@ -37,8 +41,15 @@ const MIN_SUPPORT: f32 = 0.04;
 const MIN_VALID_RATIO: f32 = 0.01;
 /// Half-size of the central patch used in `--center` mode (patch = 2*r+1).
 const CENTER_RADIUS: u32 = 10;
+/// Minimum fraction of the centre patch carrying valid depth before the centre
+/// reading is trusted. Below-min objects fill the patch with scattered garbage,
+/// which keeps support low.
+const CENTER_MIN_SUPPORT: f32 = 0.5;
 /// Smoothing factor for the moving average (0..1, higher = more responsive).
 const SMOOTHING: f32 = 0.3;
+/// Frames of history and how many must agree for a reading to be confirmed.
+const CONFIRM_HISTORY: usize = 5;
+const CONFIRM_NEED: usize = 3;
 
 fn main() {
     let center_mode = std::env::args().any(|a| a == "--center");
@@ -60,6 +71,8 @@ fn main() {
     let n_bins = (MAX_MM / BIN_MM) as usize;
     let mut smoothed: Option<f32> = None;
     let mut frames_seen = 0u32;
+    // Confirms a reading only after it stays stable across several frames.
+    let mut confirmer = Confirmer::new();
 
     if center_mode {
         println!("mode: centre patch ({}x{} @ image centre)", CENTER_RADIUS * 2 + 1, CENTER_RADIUS * 2 + 1);
@@ -88,8 +101,21 @@ fn main() {
                 };
                 frames_seen += 1;
 
-                let Some((distance_m, support)) = measurement else {
-                    // No reliable depth: object too close (<10 cm) or no signal.
+                // Raw reading (metres), if the frame itself looks plausible.
+                let raw_m = measurement.map(|(m, support)| {
+                    // Reject the centre reading unless the patch is mostly one
+                    // surface (below-min garbage is scattered, hence low support).
+                    if center_mode && support < CENTER_MIN_SUPPORT {
+                        None
+                    } else {
+                        Some(m)
+                    }
+                });
+                let confirmed_m = confirmer.update(raw_m.flatten());
+
+                let Some(distance_m) = confirmed_m else {
+                    // Not stable across frames: object too close (<10 cm) or
+                    // moving / no signal.
                     smoothed = None;
                     if last_render.elapsed() >= Duration::from_millis(200) {
                         println!(
@@ -101,6 +127,7 @@ fn main() {
                     continue;
                 };
 
+                let support = measurement.map(|(_, s)| s).unwrap_or(0.0);
                 // Exponential moving average for a stable readout (in cm).
                 let distance_cm = distance_m * 100.0;
                 smoothed = Some(match smoothed {
@@ -143,8 +170,9 @@ fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> Option<(f32, f32)> {
     let mut valid = 0u32;
 
     for v in pixels {
-        // Exclude 0 (invalid/no signal) and out-of-range values.
-        if (1..MAX_MM).contains(&v) {
+        // Exclude invalid (0) and values below the 10 cm minimum (the SDK emits
+        // garbage for objects too close to measure), plus out-of-range values.
+        if (MIN_MM..MAX_MM).contains(&v) {
             hist[(v / BIN_MM) as usize] += 1;
             valid += 1;
         }
@@ -174,7 +202,7 @@ fn dominant_distance(depth: &DepthFrame, n_bins: usize) -> Option<(f32, f32)> {
         for y in (cy.saturating_sub(40))..(cy + 40).min(depth.height()) {
             for x in (cx.saturating_sub(40))..(cx + 40).min(depth.width()) {
                 if let Some(v) = depth.pixel(x, y) {
-                    if v > 0 {
+                    if (MIN_MM..MAX_MM).contains(&v) {
                         vals.push(v);
                     }
                 }
@@ -205,7 +233,7 @@ fn center_distance(depth: &DepthFrame) -> Option<(f32, f32)> {
     for y in y_lo..(cy + r).min(depth.height()) {
         for x in x_lo..(cx + r).min(depth.width()) {
             if let Some(v) = depth.pixel(x, y) {
-                if (1..MAX_MM).contains(&v) {
+                if (MIN_MM..MAX_MM).contains(&v) {
                     vals.push(v);
                 }
             }
@@ -221,4 +249,46 @@ fn center_distance(depth: &DepthFrame) -> Option<(f32, f32)> {
     );
     vals.sort_unstable();
     Some((vals[vals.len() / 2] as f32 / 1000.0, support))
+}
+
+/// Confirms a measurement only once it stays stable across consecutive frames.
+///
+/// Readings are bucketed to 10 mm; a reading is reported only when at least
+/// [`CONFIRM_NEED`] of the last [`CONFIRM_HISTORY`] frames agree. Objects closer
+/// than the sensor minimum produce depth garbage that jumps around, so they
+/// never accumulate enough agreement and stay `None` (out-of-range).
+struct Confirmer {
+    history: VecDeque<u16>, // depth bin (mm / 10), 0 = invalid frame
+}
+
+impl Confirmer {
+    fn new() -> Self {
+        Self {
+            history: VecDeque::with_capacity(CONFIRM_HISTORY),
+        }
+    }
+
+    /// Feed one raw measurement (metres). Returns the confirmed distance in
+    /// metres once stable, or `None` while unstable / out of range.
+    fn update(&mut self, mm: Option<f32>) -> Option<f32> {
+        let bin = match mm {
+            Some(m) => (m * 1000.0 / 10.0) as u16,
+            None => 0,
+        };
+        self.history.push_back(bin);
+        while self.history.len() > CONFIRM_HISTORY {
+            self.history.pop_front();
+        }
+
+        let mut counts = std::collections::HashMap::new();
+        for &b in &self.history {
+            *counts.entry(b).or_insert(0u32) += 1;
+        }
+        let (best, count) = counts.into_iter().max_by_key(|(_, c)| *c)?;
+        if best != 0 && count >= CONFIRM_NEED as u32 {
+            Some(best as f32 * 10.0 / 1000.0)
+        } else {
+            None
+        }
+    }
 }
