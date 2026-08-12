@@ -68,6 +68,9 @@ sudo make install
 | 配置文件 | `/opt/OrbbecSDK/lib/OrbbecSDKConfig.xml` |
 | udev 规则与安装脚本 | `/opt/OrbbecSDK/shared/99-obsensor-libusb.rules`、`install_udev_rules.sh` |
 
+> 注意：源码编译**不含** `OrbbecViewer`（GUI 调试工具）。它只在官网预编译包里提供，
+> 需要的话请用方式二下载，或直接用 `bin/` 下的命令行示例验证出图。
+
 ### 2.4 设置 SDK 路径（Rust 构建用）
 
 Rust 的 `orbbec-sys` 通过环境变量 `OB_SDK_ROOT` 定位 SDK，把它写入 shell 配置：
@@ -94,7 +97,8 @@ source ~/.bashrc
 3. 把解压目录移动到统一前缀（与方式一保持一致）：
    `sudo mv <解压目录> /opt/OrbbecSDK`
    然后设置 `export OB_SDK_ROOT=/opt/OrbbecSDK`（见 2.4 节）。
-4. `OrbbecViewer`（GUI 调试工具）可直接运行：`/opt/OrbbecSDK/OrbbecViewer/OrbbecViewer`
+4. GUI 工具 `OrbbecViewer` 在预编译包的 `OrbbecViewer/` 目录下，
+   可直接运行：`./OrbbecViewer`（源码编译版没有它）
 
 ---
 
@@ -150,8 +154,9 @@ ldd /opt/OrbbecSDK/lib/libOrbbecSDK.so | grep -i "not found" || echo "依赖完�
 /opt/OrbbecSDK/bin/ob_enumerate
 ```
 
-**GUI 验证**：运行 `OrbbecViewer`（`/opt/OrbbecSDK/OrbbecViewer/OrbbecViewer`），
-确认 RGB / 深度 / IR 三路出图正常、深度图随距离正确变化。
+**GUI 验证**：源码编译版没有 `OrbbecViewer`，可用官方预编译包里的 GUI 工具，
+或直接用命令行示例验证出图（如 `/opt/OrbbecSDK/bin/ob_depth` 打印深度数据、
+`ob_enumerate` 枚举设备）。确认 RGB / 深度 / IR 三路数据正常、深度值随距离正确变化。
 
 ---
 
