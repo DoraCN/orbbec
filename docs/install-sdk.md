@@ -77,10 +77,12 @@ echo 'export OB_SDK_ROOT=/opt/OrbbecSDK' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-> 注意：`libOrbbecSDK.so` 运行时还要找到 `lib/extensions/` 下的插件库
-> （它们依赖同一前缀，若装在 `/opt/OrbbecSDK` 则相对路径 `$ORIGIN/../lib` 已自动可解析）。
-> 若报缺少 `libdepthengine.so` 等，显式设置：
-> `export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib:/opt/OrbbecSDK/lib/extensions/depthengine:$LD_LIBRARY_PATH`
+> 注意：`libOrbbecSDK.so` 的 rpath 为 `$ORIGIN:$ORIGIN/../lib`（对
+> `/opt/OrbbecSDK/lib/libOrbbecSDK.so` 展开即 `/opt/OrbbecSDK/lib`），
+> 因此它自带的依赖（在 `lib/` 下）无需 `LD_LIBRARY_PATH` 即可解析。
+> 但 `lib/extensions/` 下的插件（如 `depthengine/libdepthengine.so`）**不在此 rpath 内**，
+> 由 SDK 运行时按相对路径动态加载；若它们自身的依赖解析失败而报缺库，再显式设置：
+> `export LD_LIBRARY_PATH=/opt/OrbbecSDK/lib/extensions/depthengine:$LD_LIBRARY_PATH`
 
 ---
 
