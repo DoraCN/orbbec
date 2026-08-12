@@ -12,8 +12,10 @@
 //! ```
 
 pub mod context;
+pub mod device;
 pub mod error;
 pub mod pipeline;
 
 pub use context::Context;
+pub use device::{Device, DeviceInfo};
 pub use error::Error;
