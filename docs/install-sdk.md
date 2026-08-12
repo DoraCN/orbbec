@@ -13,7 +13,7 @@
 sudo apt update
 sudo apt install -y \
   build-essential git cmake pkg-config \
-  libusb-1.0-0-dev libglog-dev libopencv-dev \
+  libusb-1.0-0-dev libgoogle-glog-dev libopencv-dev \
   libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev libglew-dev \
   clang libclang-dev
 ```
@@ -21,7 +21,7 @@ sudo apt install -y \
 说明：
 
 - `build-essential git cmake`：编译 SDK 源码所需。
-- `libusb-1.0-0-dev libglog-dev`：SDK 运行依赖。
+- `libusb-1.0-0-dev libgoogle-glog-dev`：SDK 运行依赖（包名为 `libgoogle-glog-dev`，不是 `libglog-dev`）。
 - `libopencv-dev` + OpenGL 相关：编译 SDK 自带 examples / 运行官方 Viewer 需要。
 - **`clang libclang-dev`：`orbbec-sys` 用 bindgen 生成 Rust 绑定，必须装**，否则 `cargo build` 会在 bindgen 阶段报错。
 - 确认版本：`cmake --version`（需 ≥3.15，22.04 自带 3.22 满足）。
