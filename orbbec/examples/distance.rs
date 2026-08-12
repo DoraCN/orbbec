@@ -47,9 +47,17 @@ const CENTER_RADIUS: u32 = 10;
 const CENTER_MIN_SUPPORT: f32 = 0.5;
 /// Smoothing factor for the moving average (0..1, higher = more responsive).
 const SMOOTHING: f32 = 0.3;
-/// Frames of history and how many must agree for a reading to be confirmed.
-const CONFIRM_HISTORY: usize = 5;
-const CONFIRM_NEED: usize = 3;
+/// Sliding window used to decide a measurement from a batch of frames.
+const WINDOW_LEN: usize = 7;
+/// Minimum number of valid readings required inside the window.
+const WINDOW_MIN_VALID: usize = 4;
+/// Minimum number of readings that must lie within tolerance of the window
+/// median for the measurement to be trusted.
+const WINDOW_MIN_CONSISTENT: usize = 3;
+/// Tolerance (metres) around the median: readings outside this count as
+/// inconsistent. Below-min garbage is scattered over a wide range, so few
+/// readings fall inside the tolerance and the window is rejected.
+const WINDOW_TOL_M: f32 = 0.10;
 
 fn main() {
     let center_mode = std::env::args().any(|a| a == "--center");
@@ -71,8 +79,8 @@ fn main() {
     let n_bins = (MAX_MM / BIN_MM) as usize;
     let mut smoothed: Option<f32> = None;
     let mut frames_seen = 0u32;
-    // Confirms a reading only after it stays stable across several frames.
-    let mut confirmer = Confirmer::new();
+    // Decides each measurement from a sliding window of raw readings.
+    let mut window = WindowFilter::new();
 
     if center_mode {
         println!("mode: centre patch ({}x{} @ image centre)", CENTER_RADIUS * 2 + 1, CENTER_RADIUS * 2 + 1);
@@ -111,7 +119,7 @@ fn main() {
                         Some(m)
                     }
                 });
-                let confirmed_m = confirmer.update(raw_m.flatten());
+                let confirmed_m = window.update(raw_m.flatten());
 
                 let Some(distance_m) = confirmed_m else {
                     // Not stable across frames: object too close (<10 cm) or
@@ -251,42 +259,49 @@ fn center_distance(depth: &DepthFrame) -> Option<(f32, f32)> {
     Some((vals[vals.len() / 2] as f32 / 1000.0, support))
 }
 
-/// Confirms a measurement only once it stays stable across consecutive frames.
+/// Decides each measurement from a sliding window of raw readings.
 ///
-/// Readings are bucketed to 10 mm; a reading is reported only when at least
-/// [`CONFIRM_NEED`] of the last [`CONFIRM_HISTORY`] frames agree. Objects closer
-/// than the sensor minimum produce depth garbage that jumps around, so they
-/// never accumulate enough agreement and stay `None` (out-of-range).
-struct Confirmer {
-    history: VecDeque<u16>, // depth bin (mm / 10), 0 = invalid frame
+/// The window keeps the last [`WINDOW_LEN`] raw readings and reports the
+/// **median** (robust against single-frame spikes, so the readout does not
+/// jump). A measurement is only trusted when at least
+/// [`WINDOW_MIN_CONSISTENT`] readings lie within [`WINDOW_TOL_M`] of that
+/// median. Below-minimum objects produce depth garbage scattered over the whole
+/// range: the median has few neighbours inside the tolerance, so the window is
+/// rejected and the readout stays "out-of-range". A moving surface shifts by a
+/// few cm per frame, which stays well inside the tolerance.
+struct WindowFilter {
+    window: VecDeque<Option<f32>>, // raw measurements in metres
 }
 
-impl Confirmer {
+impl WindowFilter {
     fn new() -> Self {
         Self {
-            history: VecDeque::with_capacity(CONFIRM_HISTORY),
+            window: VecDeque::with_capacity(WINDOW_LEN),
         }
     }
 
-    /// Feed one raw measurement (metres). Returns the confirmed distance in
-    /// metres once stable, or `None` while unstable / out of range.
-    fn update(&mut self, mm: Option<f32>) -> Option<f32> {
-        let bin = match mm {
-            Some(m) => (m * 1000.0 / 10.0) as u16,
-            None => 0,
-        };
-        self.history.push_back(bin);
-        while self.history.len() > CONFIRM_HISTORY {
-            self.history.pop_front();
+    /// Feed one raw reading; returns the window's decision in metres.
+    fn update(&mut self, m: Option<f32>) -> Option<f32> {
+        self.window.push_back(m);
+        while self.window.len() > WINDOW_LEN {
+            self.window.pop_front();
         }
 
-        let mut counts = std::collections::HashMap::new();
-        for &b in &self.history {
-            *counts.entry(b).or_insert(0u32) += 1;
+        let valid: Vec<f32> = self.window.iter().filter_map(|v| *v).collect();
+        if valid.len() < WINDOW_MIN_VALID {
+            return None;
         }
-        let (best, count) = counts.into_iter().max_by_key(|(_, c)| *c)?;
-        if best != 0 && count >= CONFIRM_NEED as u32 {
-            Some(best as f32 * 10.0 / 1000.0)
+
+        let mut sorted = valid.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median = sorted[sorted.len() / 2];
+
+        let consistent = valid
+            .iter()
+            .filter(|&&v| (v - median).abs() <= WINDOW_TOL_M)
+            .count();
+        if consistent >= WINDOW_MIN_CONSISTENT {
+            Some(median)
         } else {
             None
         }
