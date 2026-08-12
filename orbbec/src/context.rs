@@ -1,5 +1,7 @@
 use orbbec_sys::ob_context;
 
+use crate::error::{check_error, Error};
+
 /// Root context for the Orbbec SDK.
 ///
 /// A [`Context`] owns the SDK global state. It is required before querying
@@ -10,17 +12,17 @@ pub struct Context {
 
 impl Context {
     /// Create a new SDK context.
-    ///
-    /// Returns `None` if the SDK could not create a context (e.g. SDK not
-    /// initialized / not installed).
-    pub fn new() -> Option<Self> {
-        // SAFETY: `ob_create_context` returns an owned, heap-allocated context.
-        let raw = unsafe { orbbec_sys::ob_create_context() };
+    pub fn new() -> Result<Self, Error> {
+        // SAFETY: `ob_create_context` returns an owned, heap-allocated context
+        // and reports failure through the error out-param.
+        let raw = unsafe { check_error(|e| orbbec_sys::ob_create_context(e))? };
         if raw.is_null() {
-            None
-        } else {
-            Some(Self { raw })
+            return Err(Error {
+                status: orbbec_sys::OBStatus_OB_STATUS_ERROR,
+                message: "ob_create_context returned a null context".to_string(),
+            });
         }
+        Ok(Self { raw })
     }
 
     /// Raw pointer to the underlying SDK context.
@@ -32,7 +34,7 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         // SAFETY: `raw` was created by `ob_create_context` and not yet freed.
-        unsafe { orbbec_sys::ob_delete_context(self.raw) };
+        let _ = unsafe { check_error(|e| orbbec_sys::ob_delete_context(self.raw, e)) };
     }
 }
 
