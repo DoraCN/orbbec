@@ -16,11 +16,15 @@ pub mod camera;
 pub mod context;
 pub mod device;
 pub mod error;
+pub mod filter;
 pub mod pipeline;
+pub mod pointcloud;
 
 pub use align::AlignFilter;
 pub use camera::{CameraParam, Distortion, Extrinsic, Intrinsic};
 pub use context::Context;
 pub use device::{Device, DeviceInfo};
 pub use error::Error;
+pub use filter::Filter;
 pub use pipeline::{AlignMode, Config, Frame, FrameType, Frameset, Pipeline, StreamType};
+pub use pointcloud::{ColorPoint, PointCloud, PointCloudFilter, PointFormat};
